@@ -1,0 +1,11 @@
+services:
+  - type: worker
+    name: liza-bot
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+    dockerfileCommands:
+      - "RUN apt-get update && apt-get install -y tesseract-ocr tesseract-ocr-por"
