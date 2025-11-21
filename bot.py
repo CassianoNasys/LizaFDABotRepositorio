@@ -75,7 +75,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(reply_text)
 
 def main() -> None:
-    token = os.environ.get("TELEGRAM_TOKEN")
+    token = os.environ.get("BOT_TOKEN")
     if not token:
         logger.error("O TELEGRAM_TOKEN não foi configurado!")
         return
