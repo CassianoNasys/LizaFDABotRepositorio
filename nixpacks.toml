@@ -1,14 +1,10 @@
 ﻿# nixpacks.toml
 
-# Define a fase de instalação
 [phases.install]
-# Lista de pacotes do sistema para instalar usando o Nix
-nixPkgs = ["tesseract", "tesseract-data-por"]
+nixPkgs = ["tesseract", "tessdata-por"]
 
-# Define a fase de build (opcional, mas bom para ser explícito)
 [phases.build]
 cmds = ["pip install -r requirements.txt"]
 
-# Define o comando de início
 [start]
 cmd = "python bot.py"
