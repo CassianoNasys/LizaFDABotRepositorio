@@ -46,7 +46,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # --- LÓGICA DE REGEX PARA ENCONTRAR DATA E HORA ---
         # Regex para encontrar "DD de Mês de AAAA HH:MM:SS"
         # Ex: "14 de nov. de 2025 07:40:50"
-        match = re.search(r'(\d{1,2})\s+de\s+([a-z]{3,})\.?\s+de\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})', extracted_text, re.IGNORECASE)
+        match = re.search(r'(\d{1,2})\s+de\s*([a-z]{3,})\.?\s+de\s+(\d{4})\s+.*?(\d{2}:\d{2}:\d{2})', extracted_text, re.IGNORECASE)
         
         if match:
             # Se encontrou o padrão, formata a data e a hora
