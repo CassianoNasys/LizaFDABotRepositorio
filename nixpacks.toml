@@ -1,7 +1,7 @@
 ﻿# nixpacks.toml
 
 [phases.install]
-nixPkgs = ["tesseract", "tesseract.lang-por"]
+nixPkgs = ["tesseract_all_langs"]
 
 [phases.build]
 cmds = ["pip install -r requirements.txt"]
