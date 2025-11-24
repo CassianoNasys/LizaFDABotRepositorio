@@ -63,7 +63,6 @@ def find_datetime_in_text(text: str) -> datetime | None:
     logger.info("Nenhum padrão de data/hora conhecido foi encontrado no texto.")
     return None
 
-# --- FUNÇÃO 'start' ADICIONADA DE VOLTA ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Envia uma mensagem quando o comando /start é emitido."""
     await update.message.reply_text("Olá! Envie uma foto com data e hora para que eu possa extrair as informações.")
@@ -93,7 +92,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
         dt_object = find_datetime_in_text(cleaned_text)
         
-        coords_match = re.search(r'(\d+\.\d+S\s+\d+\.\d+W)', cleaned_text, re.IGNORECASE)
+        # --- REGEX DE COORDENADAS ATUALIZADA E MAIS ROBUSTA ---
+        # Permite ponto ou vírgula, e S/5 ou W/V como letras.
+        coords_match = re.search(r'(\d+[\.,]\d+[S5]\s+\d+[\.,]\d+[WV])', cleaned_text, re.IGNORECASE)
         if coords_match:
             coords_str = coords_match.group(1)
             logger.info(f"Coordenadas GPS encontradas: {coords_str}")
@@ -127,7 +128,6 @@ def main() -> None:
 
     application = Application.builder().token(token).build()
 
-    # Agora a função 'start' existe e esta linha funcionará
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
 
