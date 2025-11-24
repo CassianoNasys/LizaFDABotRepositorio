@@ -50,7 +50,7 @@ def find_datetime_in_text(text: str) -> datetime | None:
             except ValueError:
                 logger.error("Valores de data/hora inválidos no Padrão 1.")
 
-    # REGRA 2: "DD/MM/AAAA HH:MM:SS" (espaço opcional)
+    # REGRA 2: "DD/MM/AAAA HH:MM:SS"
     match2 = re.search(r'(\d{2}/\d{2}/\d{4})\s*(\d{2}:\d{2}:\d{2})', text)
     if match2:
         logger.info("Padrão 2 ('DD/MM/AAAA') encontrado!")
@@ -63,7 +63,11 @@ def find_datetime_in_text(text: str) -> datetime | None:
     logger.info("Nenhum padrão de data/hora conhecido foi encontrado no texto.")
     return None
 
-# --- FUNÇÃO handle_photo ATUALIZADA PARA EXTRAIR COORDENADAS ---
+# --- FUNÇÃO 'start' ADICIONADA DE VOLTA ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Envia uma mensagem quando o comando /start é emitido."""
+    await update.message.reply_text("Olá! Envie uma foto com data e hora para que eu possa extrair as informações.")
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not (update.message.photo or update.message.document):
         return
@@ -75,7 +79,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     file_path = f"temp_{file.file_id}.jpg"
     
-    # Mensagens padrão
     dt_object = None
     coords_str = None
 
@@ -88,11 +91,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         cleaned_text = clean_ocr_text(raw_text)
         
-        # PASSO 1: Tenta encontrar a data e hora
         dt_object = find_datetime_in_text(cleaned_text)
         
-        # PASSO 2: Tenta encontrar as coordenadas GPS
-        # Regex para encontrar: [número].[número]S [número].[número]W
         coords_match = re.search(r'(\d+\.\d+S\s+\d+\.\d+W)', cleaned_text, re.IGNORECASE)
         if coords_match:
             coords_str = coords_match.group(1)
@@ -106,7 +106,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if os.path.exists(file_path):
             os.remove(file_path)
 
-    # PASSO 3: Constrói a resposta final com base no que foi encontrado
     if dt_object or coords_str:
         reply_parts = ["Dados extraídos da imagem! 📸"]
         if dt_object:
@@ -128,7 +127,7 @@ def main() -> None:
 
     application = Application.builder().token(token).build()
 
-    # O comando /start não foi alterado
+    # Agora a função 'start' existe e esta linha funcionará
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
 
