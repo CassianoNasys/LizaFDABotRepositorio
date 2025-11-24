@@ -38,24 +38,28 @@ def find_datetime_in_text(text: str) -> datetime | None:
         'jul': 7, 'ago': 8, 'set': 9, 'out': 10, 'nov': 11, 'dez': 12
     }
 
-    # REGRA 1: "DD de Mês de AAAA HH:MM:SS"
-    match1 = re.search(r'(\d{1,2})\s*(?:de\s*)?([a-z]{3,})\.?\s*(?:de\s*)?(\d{4})\s*.*?(\d{2}:\d{2}:\d{2})', text, re.IGNORECASE)
+    # REGRA 1 (sem alterações)
+    match1 = re.search(r'(\d{1,2})\s*(?:de\s*)?([a-z]{3,})\.?\s*(?:de\s*)?(\d{4})\s*.*?(\d{2}:\d{2}(?::\d{2})?)', text, re.IGNORECASE)
     if match1:
         logger.info("Padrão 1 ('DD de Mês de AAAA') encontrado!")
-        day, month_str, year, time = match1.groups()
+        day, month_str, year, time_str = match1.groups()
         month = month_map.get(month_str.lower()[:3])
         if month:
             try:
-                return datetime(int(year), month, int(day), int(time[:2]), int(time[3:5]), int(time[6:]))
+                # Adiciona :00 se os segundos estiverem faltando
+                if len(time_str) == 5: time_str += ':00'
+                return datetime(int(year), month, int(day), int(time_str[:2]), int(time_str[3:5]), int(time_str[6:]))
             except ValueError:
                 logger.error("Valores de data/hora inválidos no Padrão 1.")
 
-    # REGRA 2: "DD/MM/AAAA HH:MM:SS"
-    match2 = re.search(r'(\d{2}/\d{2}/\d{4})\s*(\d{2}:\d{2}:\d{2})', text)
+    # REGRA 2 ATUALIZADA: Segundos (:\d{2}) agora são opcionais
+    match2 = re.search(r'(\d{2}/\d{2}/\d{4})\s*(\d{2}:\d{2}(?::\d{2})?)', text)
     if match2:
         logger.info("Padrão 2 ('DD/MM/AAAA') encontrado!")
         date_str, time_str = match2.groups()
         try:
+            # Adiciona :00 se os segundos estiverem faltando
+            if len(time_str) == 5: time_str += ':00'
             return datetime.strptime(f"{date_str} {time_str}", '%d/%m/%Y %H:%M:%S')
         except ValueError:
             logger.error("Formato de data/hora inválido para DD/MM/AAAA.")
@@ -92,9 +96,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
         dt_object = find_datetime_in_text(cleaned_text)
         
-        # --- REGEX DE COORDENADAS ATUALIZADA E MAIS ROBUSTA ---
-        # Permite ponto ou vírgula, e S/5 ou W/V como letras.
-        coords_match = re.search(r'(\d+[\.,]\d+[S5]\s+\d+[\.,]\d+[WV])', cleaned_text, re.IGNORECASE)
+        # --- REGEX DE COORDENADAS ATUALIZADA: Hífen opcional ---
+        # Permite um hífen opcional no início de cada coordenada
+        coords_match = re.search(r'(-?\d+[\.,]\d+[S5]\s+-?\d+[\.,]\d+[WV])', cleaned_text, re.IGNORECASE)
         if coords_match:
             coords_str = coords_match.group(1)
             logger.info(f"Coordenadas GPS encontradas: {coords_str}")
