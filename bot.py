@@ -25,7 +25,7 @@ RELATORIO_GROUP_ID = -5078417185
 
 # Arquivo para armazenar coordenadas
 COORDS_FILE = "coordenadas.json"
-MAPA_FILE = "mapa.html"
+MAPA_FILE = "mapa.png"
 
 # Variáveis globais para controlar o delay de geração de mapa
 mapa_timer = None
@@ -204,9 +204,9 @@ def add_coordinate(latitude: float, longitude: float, timestamp: str, cliente: s
 # ============================================================================
 
 def generate_map() -> bool:
-    """Gera um mapa interativo com todas as coordenadas agrupadas por cliente."""
+    """Gera um mapa como imagem PNG com todas as coordenadas agrupadas por cliente."""
     try:
-        import folium
+        import matplotlib.pyplot as plt
         
         coords_list = load_coordinates()
         
@@ -221,18 +221,8 @@ def generate_map() -> bool:
             logger.warning("Nenhuma coordenada com cliente para gerar mapa")
             return False
         
-        # Calcula o centro do mapa
-        lats = [c["latitude"] for c in coords_com_cliente]
-        lons = [c["longitude"] for c in coords_com_cliente]
-        center_lat = sum(lats) / len(lats)
-        center_lon = sum(lons) / len(lons)
-        
-        # Cria o mapa
-        mapa = folium.Map(
-            location=[center_lat, center_lon],
-            zoom_start=13,
-            tiles="OpenStreetMap"
-        )
+        # Cria figura
+        fig, ax = plt.subplots(figsize=(14, 10))
         
         # Agrupa coordenadas por cliente
         coords_por_cliente = {}
@@ -242,44 +232,52 @@ def generate_map() -> bool:
                 coords_por_cliente[cliente] = []
             coords_por_cliente[cliente].append(coord)
         
-        # Adiciona marcadores para cada cliente
+        # Calcula limites do mapa
+        lats = [c["latitude"] for c in coords_com_cliente]
+        lons = [c["longitude"] for c in coords_com_cliente]
+        
+        lat_min, lat_max = min(lats) - 0.01, max(lats) + 0.01
+        lon_min, lon_max = min(lons) - 0.01, max(lons) + 0.01
+        
+        # Plota os pontos de cada cliente
         for cliente_name, coords in coords_por_cliente.items():
             if cliente_name in CLIENTES_OURILANDIA:
-                cor = CLIENTES_OURILANDIA[cliente_name]["cor"]
+                cliente_info = CLIENTES_OURILANDIA[cliente_name]
+                cor = cliente_info["cor"]
                 
-                for coord in coords:
-                    folium.Marker(
-                        location=[coord["latitude"], coord["longitude"]],
-                        popup=f"<b>{cliente_name}</b><br>ID: {coord['id']}<br>Data: {coord['timestamp']}<br>Lat: {coord['latitude']:.4f}<br>Lon: {coord['longitude']:.4f}",
-                        tooltip=f"{cliente_name} - {coord['timestamp']}",
-                        icon=folium.Icon(color=cor, icon="info-sign")
-                    ).add_to(mapa)
+                # Plota os pontos das fotos
+                lats_cliente = [c["latitude"] for c in coords]
+                lons_cliente = [c["longitude"] for c in coords]
+                
+                ax.scatter(lons_cliente, lats_cliente, 
+                          c=cor, s=200, marker='o', 
+                          label=f"{cliente_name} ({len(coords)})",
+                          edgecolors='black', linewidth=2, zorder=3)
+                
+                # Plota o centro do cliente (geofence)
+                ax.scatter(cliente_info["longitude"], cliente_info["latitude"],
+                          c=cor, s=500, marker='*',
+                          edgecolors='black', linewidth=2, zorder=2)
         
-        # Adiciona legenda com contagem
-        legend_html = '''
-        <div style="position: fixed; 
-                    bottom: 50px; right: 50px; width: 250px; height: auto; 
-                    background-color: white; border:2px solid grey; z-index:9999; 
-                    font-size:14px; padding: 10px">
-            <b>Clientes - Ourilândia</b><br>
-        '''
+        # Configurações do gráfico
+        ax.set_xlim(lon_min, lon_max)
+        ax.set_ylim(lat_min, lat_max)
+        ax.set_xlabel("Longitude", fontsize=12, fontweight='bold')
+        ax.set_ylabel("Latitude", fontsize=12, fontweight='bold')
+        ax.set_title("Mapa de Pontos - Ourilândia", fontsize=16, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
         
-        for cliente_name, coords in sorted(coords_por_cliente.items()):
-            cor = CLIENTES_OURILANDIA[cliente_name]["cor"]
-            contagem = len(coords)
-            legend_html += f'<i style="background:{cor}; width: 18px; height: 18px; float: left; margin-right: 8px; border-radius: 50%;"></i>{cliente_name}: {contagem}<br>'
+        # Salva a figura
+        plt.tight_layout()
+        plt.savefig(MAPA_FILE, dpi=150, bbox_inches='tight')
+        plt.close()
         
-        legend_html += '</div>'
-        
-        mapa.get_root().html.add_child(folium.Element(legend_html))
-        
-        # Salva como HTML
-        mapa.save(MAPA_FILE)
-        logger.info(f"Mapa HTML gerado: {MAPA_FILE} com {len(coords_com_cliente)} pontos")
+        logger.info(f"Mapa PNG gerado: {MAPA_FILE} com {len(coords_com_cliente)} pontos")
         return True
     
     except ImportError:
-        logger.error("Folium não está instalado")
+        logger.error("Matplotlib não está instalado")
         return False
     except Exception as e:
         logger.error(f"Erro ao gerar mapa: {e}")
@@ -307,9 +305,9 @@ async def schedule_map_generation(context: ContextTypes.DEFAULT_TYPE, delay: int
                 coords_com_cliente = [c for c in coords_list if c.get("cliente")]
                 
                 with open(MAPA_FILE, 'rb') as mapa_file:
-                    await context.bot.send_document(
+                    await context.bot.send_photo(
                         chat_id=RELATORIO_GROUP_ID,
-                        document=mapa_file,
+                        photo=mapa_file,
                         caption=f"🗺️ Mapa Ourilândia Atualizado!\n\n"
                                 f"📊 Total de pontos: {len(coords_com_cliente)}\n"
                                 f"⏰ Atualizado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
@@ -552,6 +550,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if cliente_definido and coords_str and not is_duplicate and not ignorada:
         logger.info("Agendando geração de mapa com delay de 60 segundos...")
         await schedule_map_generation(context, delay=60)
+        
+        # Também envia uma confirmação com os dados da foto
+        try:
+            await update.message.reply_text(
+                f"✅ Foto processada com sucesso!\n"
+                f"Aguardando outras fotos... (60s para gerar mapa)"
+            )
+        except:
+            pass
 
 def main() -> None:
     """Função principal que inicia o bot."""
