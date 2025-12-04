@@ -225,8 +225,9 @@ def generate_map() -> bool:
             logger.warning("Nenhuma coordenada com cliente para gerar mapa")
             return False
         
-        # Cria figura
-        fig, ax = plt.subplots(figsize=(14, 10))
+        # Cria figura com proporção corrigida para Web Mercator
+        fig, ax = plt.subplots(figsize=(16, 12))
+        ax.set_aspect('equal', adjustable='box')
         
         # Agrupa coordenadas por cliente
         coords_por_cliente = {}
@@ -299,9 +300,9 @@ def generate_map() -> bool:
         ax.set_xticklabels([])
         ax.set_yticklabels([])
         
-        # Salva a figura
+        # Salva a figura com proporção mantida
         plt.tight_layout()
-        plt.savefig(MAPA_FILE, dpi=150, bbox_inches='tight')
+        plt.savefig(MAPA_FILE, dpi=150, bbox_inches='tight', pad_inches=0.5)
         plt.close()
         
         logger.info(f"Mapa PNG com tiles gerado: {MAPA_FILE} com {len(coords_com_cliente)} pontos")
