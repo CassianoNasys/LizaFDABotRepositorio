@@ -117,12 +117,14 @@ def find_cliente_by_geofence(latitude: float, longitude: float) -> str | None:
 
 def extract_client_tag(text: str) -> list[str]:
     """
-    Extrai tags de cliente do formato #Oia NomeCliente (ou tOia se OCR ler # como t).
+    Extrai tags de cliente do formato #Oia NomeCliente.
     Retorna uma lista de clientes encontrados.
     """
-    # Procura por padrão: #Oia NomeCliente ou tOia NomeCliente
-    # O OCR às vezes lê # como t, então aceitamos ambos
-    pattern = r'[#t]Oia\s+(\w+)'
+    # Procura por padrão: #Oia NomeCliente ou variações
+    # O OCR às vezes lê:
+    # - # como t (tóia em vez de #oia)
+    # - O como 0 (zero) (#0ia em vez de #Oia)
+    pattern = r'[#t][O0]ia\s+(\w+)'
     matches = re.findall(pattern, text, re.IGNORECASE)
     
     if matches:
