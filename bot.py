@@ -1,49 +1,40 @@
-#!/usr/bin/env python3
-"""
-Bot do Telegram para extrair coordenadas GPS de fotos.
-Formato esperado: -6,6386S -51,9896W
-
-Deploy no Railway:
-1. Configure a variável de ambiente BOT_TOKEN com seu token do Telegram
-2. Execute: python3 bot_telegram.py
-"""
-
 import logging
 import os
-import re
-import io
 from datetime import datetime
-from pathlib import Path
 from PIL import Image, ImageOps
 
 import pytesseract
+import re
+
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # Configuração do Tesseract
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
-# Configuração de logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# FUNÇÕES DE PROCESSAMENTO DE COORDENADAS
-# ============================================================================
+def preprocess_image_for_ocr(image_path: str) -> Image.Image:
+    """Aplica filtros na imagem para melhorar a qualidade do OCR."""
+    img = Image.open(image_path)
+    img = img.convert('L')
+    img = ImageOps.autocontrast(img)
+    img = img.point(lambda x: 0 if x < 128 else 255, '1')
+    return img
+
+def clean_ocr_text(text: str) -> str:
+    """Limpa o texto extraído pelo OCR."""
+    text = re.sub(r'denov', 'de nov', text, flags=re.IGNORECASE)
+    logger.info(f"Texto após a limpeza:\n---\n{text}\n---")
+    return text
 
 def parse_coordinates(coords_str: str) -> tuple[float, float] | None:
     """
     Processa coordenadas GPS no formato: -6,6386S -51,9896W
     Retorna uma tupla (latitude, longitude) como números decimais.
-    
-    Args:
-        coords_str: String com coordenadas no formato "-6,6386S -51,9896W"
-    
-    Returns:
-        Tupla (latitude, longitude) ou None se inválido
     """
     try:
         # Divide a string em duas partes (latitude e longitude)
@@ -72,293 +63,127 @@ def parse_coordinates(coords_str: str) -> tuple[float, float] | None:
             logger.error(f"Longitude fora do intervalo válido: {longitude}")
             return None
         
-        logger.info(f"✓ Coordenadas processadas: Lat={latitude}, Lon={longitude}")
+        logger.info(f"Coordenadas processadas com sucesso: Latitude={latitude}, Longitude={longitude}")
         return (latitude, longitude)
     
     except ValueError as e:
         logger.error(f"Erro ao converter coordenadas para números: {e}")
         return None
 
-def format_coordinates(latitude: float, longitude: float) -> str:
-    """
-    Formata coordenadas para exibição amigável.
-    
-    Args:
-        latitude: Valor da latitude
-        longitude: Valor da longitude
-    
-    Returns:
-        String formatada com coordenadas
-    """
-    lat_dir = "S" if latitude < 0 else "N"
-    lon_dir = "W" if longitude < 0 else "E"
-    
-    lat_abs = abs(latitude)
-    lon_abs = abs(longitude)
-    
-    return f"{lat_abs:.4f}° {lat_dir} | {lon_abs:.4f}° {lon_dir}"
+def find_datetime_in_text(text: str) -> datetime | None:
+    """Busca por data e hora no texto usando várias regras."""
+    month_map = {
+        'jan': 1, 'fev': 2, 'mar': 3, 'abr': 4, 'mai': 5, 'jun': 6, 
+        'jul': 7, 'ago': 8, 'set': 9, 'out': 10, 'nov': 11, 'dez': 12
+    }
 
-# ============================================================================
-# FUNÇÕES DE PROCESSAMENTO DE IMAGEM
-# ============================================================================
+    # REGRA 1 (sem alterações)
+    match1 = re.search(r'(\d{1,2})\s*(?:de\s*)?([a-z]{3,})\.?\s*(?:de\s*)?(\d{4})\s*.*?(\d{2}:\d{2}(?::\d{2})?)', text, re.IGNORECASE)
+    if match1:
+        logger.info("Padrão 1 ('DD de Mês de AAAA') encontrado!")
+        day, month_str, year, time_str = match1.groups()
+        month = month_map.get(month_str.lower()[:3])
+        if month:
+            try:
+                # Adiciona :00 se os segundos estiverem faltando
+                if len(time_str) == 5: time_str += ':00'
+                return datetime(int(year), month, int(day), int(time_str[:2]), int(time_str[3:5]), int(time_str[6:]))
+            except ValueError:
+                logger.error("Valores de data/hora inválidos no Padrão 1.")
 
-def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
-    """
-    Aplica filtros na imagem para melhorar a qualidade do OCR.
-    
-    Args:
-        image: Objeto PIL Image
-    
-    Returns:
-        Imagem processada
-    """
-    try:
-        # Converte para escala de cinza
-        img = image.convert('L')
-        # Aumenta o contraste automaticamente
-        img = ImageOps.autocontrast(img)
-        # Converte para preto e branco (binarização)
-        img = img.point(lambda x: 0 if x < 128 else 255, '1')
-        return img
-    except Exception as e:
-        logger.error(f"Erro ao pré-processar imagem: {e}")
-        return image
+    # REGRA 2 ATUALIZADA: Segundos (:\d{2}) agora são opcionais
+    match2 = re.search(r'(\d{2}/\d{2}/\d{4})\s*(\d{2}:\d{2}(?::\d{2})?)', text)
+    if match2:
+        logger.info("Padrão 2 ('DD/MM/AAAA') encontrado!")
+        date_str, time_str = match2.groups()
+        try:
+            # Adiciona :00 se os segundos estiverem faltando
+            if len(time_str) == 5: time_str += ':00'
+            return datetime.strptime(f"{date_str} {time_str}", '%d/%m/%Y %H:%M:%S')
+        except ValueError:
+            logger.error("Formato de data/hora inválido para DD/MM/AAAA.")
 
-def extract_text_from_image(image: Image.Image) -> str:
-    """
-    Extrai texto de uma imagem usando OCR.
-    
-    Args:
-        image: Objeto PIL Image
-    
-    Returns:
-        Texto extraído
-    """
-    try:
-        # Pré-processa a imagem
-        processed_image = preprocess_image_for_ocr(image)
-        # Executa OCR
-        text = pytesseract.image_to_string(processed_image, lang='por')
-        logger.info(f"Texto extraído (bruto):\n{text}")
-        return text
-    except Exception as e:
-        logger.error(f"Erro ao extrair texto da imagem: {e}")
-        return ""
-
-def extract_coordinates_from_text(text: str) -> str | None:
-    """
-    Procura por coordenadas GPS no texto extraído.
-    Padrão esperado: -6,6386S -51,9896W
-    
-    Args:
-        text: Texto extraído da imagem
-    
-    Returns:
-        String com coordenadas ou None se não encontrado
-    """
-    # Regex para encontrar coordenadas no formato: -6,6386S -51,9896W
-    # Permite: hífen opcional, dígitos, vírgula ou ponto, dígitos, letra de direção
-    coords_match = re.search(
-        r'(-?\d+[\.,]\d+[NSns])\s+(-?\d+[\.,]\d+[EWLOwvloe])',
-        text
-    )
-    
-    if coords_match:
-        coords_str = f"{coords_match.group(1)} {coords_match.group(2)}"
-        logger.info(f"Coordenadas encontradas (bruto): {coords_str}")
-        return coords_str
-    
-    logger.info("Nenhuma coordenada encontrada no texto.")
+    logger.info("Nenhum padrão de data/hora conhecido foi encontrado no texto.")
     return None
 
-# ============================================================================
-# HANDLERS DO BOT
-# ============================================================================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handler para o comando /start.
-    Envia uma mensagem de boas-vindas.
-    """
-    welcome_message = (
-        "👋 **Bem-vindo ao Bot de Coordenadas GPS!**\n\n"
-        "Envie uma foto com coordenadas GPS visíveis e eu vou extrair as informações para você.\n\n"
-        "📸 **Formato esperado das coordenadas:**\n"
-        "`-6,6386S -51,9896W`\n\n"
-        "Comandos disponíveis:\n"
-        "/start - Mostra esta mensagem\n"
-        "/help - Ajuda detalhada\n"
-    )
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handler para o comando /help.
-    Exibe instruções detalhadas.
-    """
-    help_message = (
-        "🆘 **AJUDA - Como usar o bot**\n\n"
-        "1️⃣ **Tire uma foto** com um aplicativo que adicione coordenadas GPS\n"
-        "   Exemplos: GPS Map Camera, Solocator, ou câmera nativa com GPS ativado\n\n"
-        "2️⃣ **Envie a foto** para este chat\n\n"
-        "3️⃣ **O bot vai:**\n"
-        "   ✓ Extrair o texto da imagem (OCR)\n"
-        "   ✓ Procurar pelas coordenadas GPS\n"
-        "   ✓ Validar e formatar as coordenadas\n"
-        "   ✓ Mostrar o resultado\n\n"
-        "📍 **Formato de coordenadas suportado:**\n"
-        "`-6,6386S -51,9896W`\n"
-        "(Latitude Longitude com direção)\n\n"
-        "❓ **Dúvidas?**\n"
-        "Certifique-se de que:\n"
-        "• A câmera tem GPS ativado\n"
-        "• As coordenadas estão visíveis na imagem\n"
-        "• O formato é similar ao exemplo acima\n"
-    )
-    await update.message.reply_text(help_message, parse_mode='Markdown')
+    """Envia uma mensagem quando o comando /start é emitido."""
+    await update.message.reply_text("Olá! Envie uma foto com data e hora para que eu possa extrair as informações.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handler para fotos enviadas ao bot.
-    Extrai coordenadas GPS da imagem.
-    """
-    
-    # Verifica se é uma foto ou documento
+    if not (update.message.photo or update.message.document):
+        return
+
     if update.message.photo:
         file = await update.message.photo[-1].get_file()
-        file_name = f"photo_{update.message.photo[-1].file_id}.jpg"
-    elif update.message.document:
-        file = await update.message.document.get_file()
-        file_name = update.message.document.file_name or f"document_{file.file_id}"
     else:
-        return
+        file = await update.message.document.get_file()
+
+    file_path = f"temp_{file.file_id}.jpg"
     
-    # Envia mensagem de processamento
-    processing_msg = await update.message.reply_text(
-        "⏳ Processando a imagem... Por favor, aguarde."
-    )
-    
-    temp_file_path = f"/tmp/{file_name}"
-    
+    dt_object = None
+    coords_str = None
+
     try:
-        # Faz o download da imagem
-        await file.download_to_drive(temp_file_path)
-        logger.info(f"Imagem salva em: {temp_file_path}")
+        await file.download_to_drive(file_path)
         
-        # Abre a imagem
-        image = Image.open(temp_file_path)
-        logger.info(f"Imagem aberta: {image.size} pixels")
+        processed_image = preprocess_image_for_ocr(file_path)
+        raw_text = pytesseract.image_to_string(processed_image, lang='por')
+        logger.info(f"Texto extraído (bruto):\n---\n{raw_text}\n---")
+
+        cleaned_text = clean_ocr_text(raw_text)
         
-        # Extrai texto da imagem
-        extracted_text = extract_text_from_image(image)
+        dt_object = find_datetime_in_text(cleaned_text)
         
-        if not extracted_text.strip():
-            await processing_msg.edit_text(
-                "❌ Não consegui extrair texto da imagem.\n"
-                "Certifique-se de que as coordenadas estão visíveis e legíveis."
-            )
-            return
-        
-        # Procura por coordenadas no texto
-        coords_str = extract_coordinates_from_text(extracted_text)
-        
-        if not coords_str:
-            await processing_msg.edit_text(
-                "❌ Não encontrei coordenadas GPS na imagem.\n\n"
-                "📍 Formato esperado: `-6,6386S -51,9896W`\n\n"
-                "Verifique se:\n"
-                "• As coordenadas estão visíveis na imagem\n"
-                "• O formato é similar ao exemplo acima\n"
-                "• A câmera tem GPS ativado"
-            )
-            return
-        
-        # Processa as coordenadas
-        parsed_coords = parse_coordinates(coords_str)
-        
-        if not parsed_coords:
-            await processing_msg.edit_text(
-                "❌ Não consegui processar as coordenadas.\n\n"
-                f"Coordenadas encontradas: `{coords_str}`\n\n"
-                "Verifique se o formato está correto."
-            )
-            return
-        
-        # Formata a resposta
-        latitude, longitude = parsed_coords
-        formatted_coords = format_coordinates(latitude, longitude)
-        
-        response_message = (
-            "✅ **Coordenadas Extraídas com Sucesso!**\n\n"
-            f"📍 **Localização:** {formatted_coords}\n\n"
-            f"**Valores Numéricos:**\n"
-            f"• Latitude: `{latitude:.6f}`\n"
-            f"• Longitude: `{longitude:.6f}`\n\n"
-            f"**Formato Original:** `{coords_str}`\n\n"
-            f"⏰ Processado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
-        )
-        
-        await processing_msg.edit_text(response_message, parse_mode='Markdown')
-        logger.info(f"Resposta enviada com sucesso para o usuário.")
-    
+        # --- REGEX DE COORDENADAS ATUALIZADA ---
+        # Procura por padrão: -6,6386S -51,9896W
+        # Permite: hífen opcional, dígitos, vírgula ou ponto, dígitos, letra de direção
+        coords_match = re.search(r'(-?\d+[\.,]\d+[NSns])\s+(-?\d+[\.,]\d+[EWLOwvloe])', cleaned_text)
+        if coords_match:
+            coords_str = f"{coords_match.group(1)} {coords_match.group(2)}"
+            logger.info(f"Coordenadas GPS encontradas (bruto): {coords_str}")
+            
+            # Processa as coordenadas para formato numérico
+            parsed_coords = parse_coordinates(coords_str)
+            if parsed_coords:
+                latitude, longitude = parsed_coords
+                coords_str = f"{latitude:.4f}, {longitude:.4f}"
+            else:
+                coords_str = None
+
     except Exception as e:
         logger.error(f"Erro ao processar a imagem: {e}")
-        await processing_msg.edit_text(
-            f"❌ Ocorreu um erro ao processar a imagem:\n`{str(e)}`\n\n"
-            "Por favor, tente novamente com outra imagem."
-        )
-    
+        await update.message.reply_text("Ocorreu um erro ao tentar processar esta imagem.")
+        return
     finally:
-        # Limpa o arquivo temporário
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-            logger.info(f"Arquivo temporário removido: {temp_file_path}")
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handler para mensagens de texto.
-    Responde com instruções.
-    """
-    await update.message.reply_text(
-        "📸 Por favor, envie uma **foto** com coordenadas GPS visíveis.\n\n"
-        "Use /help para mais informações."
-    )
-
-# ============================================================================
-# FUNÇÃO PRINCIPAL
-# ============================================================================
+    if dt_object or coords_str:
+        reply_parts = ["Dados extraídos da imagem! 📸"]
+        if dt_object:
+            reply_parts.append(f"Data e Hora: {dt_object.strftime('%d/%m/%Y %H:%M:%S')}")
+        if coords_str:
+            reply_parts.append(f"Coordenadas: {coords_str}")
+        
+        reply_text = "\n".join(reply_parts)
+    else:
+        reply_text = "Não consegui encontrar data/hora ou coordenadas na imagem. 😕"
+            
+    await update.message.reply_text(reply_text)
 
 def main() -> None:
-    """
-    Função principal que inicia o bot.
-    """
-    # Obtém o token do Telegram
     token = os.environ.get("BOT_TOKEN")
-    
     if not token:
-        logger.error(
-            "❌ BOT_TOKEN não foi configurado!\n"
-            "Configure a variável de ambiente BOT_TOKEN com seu token do Telegram."
-        )
+        logger.error("O BOT_TOKEN não foi configurado!")
         return
-    
-    logger.info("🚀 Iniciando o bot do Telegram...")
-    
-    # Cria a aplicação
+
     application = Application.builder().token(token).build()
-    
-    # Adiciona handlers
+
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(
-        MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo)
-    )
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
-    logger.info("✅ Bot configurado e escutando mensagens...")
-    logger.info("Pressione Ctrl+C para parar o bot.")
-    
-    # Inicia o bot
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
+
+    logger.info("Bot iniciado e escutando...")
     application.run_polling()
 
 if __name__ == "__main__":
