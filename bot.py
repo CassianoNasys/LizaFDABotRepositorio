@@ -18,11 +18,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def preprocess_image_for_ocr(image_path: str) -> Image.Image:
-    """Aplica filtros na imagem para melhorar a qualidade do OCR."""
+    """Abre a imagem sem pré-processamento agressivo que destrói texto pequeno."""
     img = Image.open(image_path)
-    img = img.convert('L')
-    img = ImageOps.autocontrast(img)
-    img = img.point(lambda x: 0 if x < 128 else 255, '1')
+    # Não aplicamos binarização agressiva, pois destroi o texto pequeno das coordenadas
+    # O Tesseract consegue ler melhor a imagem original ou com contraste suave
     return img
 
 def clean_ocr_text(text: str) -> str:
@@ -128,17 +127,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await file.download_to_drive(file_path)
         
         processed_image = preprocess_image_for_ocr(file_path)
-        raw_text = pytesseract.image_to_string(processed_image, lang='por')
+        raw_text = pytesseract.image_to_string(processed_image, lang='por+eng')
         logger.info(f"Texto extraído (bruto):\n---\n{raw_text}\n---")
 
         cleaned_text = clean_ocr_text(raw_text)
+        logger.info(f"Texto limpo para busca de coordenadas:\n---\n{cleaned_text}\n---")
         
         dt_object = find_datetime_in_text(cleaned_text)
         
         # --- REGEX DE COORDENADAS ATUALIZADA ---
-        # Procura por padrão: -6,6386S -51,9896W
+        # Procura por padrão: -6,6386S -51,9866W
         # Permite: hífen opcional, dígitos, vírgula ou ponto, dígitos, letra de direção
-        coords_match = re.search(r'(-?\d+[\.,]\d+[NSns])\s+(-?\d+[\.,]\d+[EWLOwvloe])', cleaned_text)
+        # Tenta com re.IGNORECASE para ser mais flexível
+        coords_match = re.search(r'(-?\d+[\.,]\d+[NSns])\s+(-?\d+[\.,]\d+[EWLOwvloe])', cleaned_text, re.IGNORECASE)
         if coords_match:
             coords_str = f"{coords_match.group(1)} {coords_match.group(2)}"
             logger.info(f"Coordenadas GPS encontradas (bruto): {coords_str}")
