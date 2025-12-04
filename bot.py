@@ -206,9 +206,11 @@ def add_coordinate(latitude: float, longitude: float, timestamp: str, cliente: s
 # ============================================================================
 
 def generate_map() -> bool:
-    """Gera um mapa como imagem PNG com todas as coordenadas agrupadas por cliente."""
+    """Gera um mapa real com tiles do OpenStreetMap com todas as coordenadas agrupadas por cliente."""
     try:
         import matplotlib.pyplot as plt
+        import numpy as np
+        import contextily as ctx
         
         coords_list = load_coordinates()
         
@@ -238,8 +240,28 @@ def generate_map() -> bool:
         lats = [c["latitude"] for c in coords_com_cliente]
         lons = [c["longitude"] for c in coords_com_cliente]
         
-        lat_min, lat_max = min(lats) - 0.01, max(lats) + 0.01
-        lon_min, lon_max = min(lons) - 0.01, max(lons) + 0.01
+        lat_min, lat_max = min(lats) - 0.015, max(lats) + 0.015
+        lon_min, lon_max = min(lons) - 0.015, max(lons) + 0.015
+        
+        # Converte de lat/lon para Web Mercator (EPSG:3857)
+        def latlon_to_mercator(lat, lon):
+            x = lon * 20037508.34 / 180.0
+            y = np.log(np.tan((90.0 + lat) * np.pi / 360.0)) * 20037508.34 / 180.0
+            return x, y
+        
+        x_min, y_min = latlon_to_mercator(lat_min, lon_min)
+        x_max, y_max = latlon_to_mercator(lat_max, lon_max)
+        
+        # Define limites do mapa
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        
+        # Adiciona tiles do OpenStreetMap
+        try:
+            ctx.add_basemap(ax, crs="EPSG:3857", source=ctx.providers.OpenStreetMap.Mapnik)
+            logger.info("Tiles do OpenStreetMap carregados com sucesso")
+        except Exception as e:
+            logger.warning(f"Erro ao carregar tiles: {e}")
         
         # Plota os pontos de cada cliente
         for cliente_name, coords in coords_por_cliente.items():
@@ -247,39 +269,46 @@ def generate_map() -> bool:
                 cliente_info = CLIENTES_OURILANDIA[cliente_name]
                 cor = cliente_info["cor"]
                 
-                # Plota os pontos das fotos
+                # Converte coordenadas para Web Mercator
                 lats_cliente = [c["latitude"] for c in coords]
                 lons_cliente = [c["longitude"] for c in coords]
                 
-                ax.scatter(lons_cliente, lats_cliente, 
-                          c=cor, s=200, marker='o', 
+                x_coords = [lon * 20037508.34 / 180.0 for lon in lons_cliente]
+                y_coords = [np.log(np.tan((90.0 + lat) * np.pi / 360.0)) * 20037508.34 / 180.0 for lat in lats_cliente]
+                
+                # Plota os pontos das fotos
+                ax.scatter(x_coords, y_coords, 
+                          c=cor, s=300, marker='o', 
                           label=f"{cliente_name} ({len(coords)})",
-                          edgecolors='black', linewidth=2, zorder=3)
+                          edgecolors='black', linewidth=2, zorder=3, alpha=0.8)
                 
                 # Plota o centro do cliente (geofence)
-                ax.scatter(cliente_info["longitude"], cliente_info["latitude"],
-                          c=cor, s=500, marker='*',
-                          edgecolors='black', linewidth=2, zorder=2)
+                x_centro, y_centro = latlon_to_mercator(cliente_info["latitude"], cliente_info["longitude"])
+                ax.scatter(x_centro, y_centro,
+                          c=cor, s=600, marker='*',
+                          edgecolors='black', linewidth=2, zorder=2, alpha=0.6)
         
         # Configurações do gráfico
-        ax.set_xlim(lon_min, lon_max)
-        ax.set_ylim(lat_min, lat_max)
         ax.set_xlabel("Longitude", fontsize=12, fontweight='bold')
         ax.set_ylabel("Latitude", fontsize=12, fontweight='bold')
         ax.set_title("Mapa de Pontos - Ourilândia", fontsize=16, fontweight='bold')
+        ax.legend(loc='upper left', fontsize=11, framealpha=0.95)
         ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
+        
+        # Remove os labels dos eixos (em Mercator)
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
         
         # Salva a figura
         plt.tight_layout()
         plt.savefig(MAPA_FILE, dpi=150, bbox_inches='tight')
         plt.close()
         
-        logger.info(f"Mapa PNG gerado: {MAPA_FILE} com {len(coords_com_cliente)} pontos")
+        logger.info(f"Mapa PNG com tiles gerado: {MAPA_FILE} com {len(coords_com_cliente)} pontos")
         return True
     
-    except ImportError:
-        logger.error("Matplotlib não está instalado")
+    except ImportError as e:
+        logger.error(f"Bibliotecas não instaladas: {e}")
         return False
     except Exception as e:
         logger.error(f"Erro ao gerar mapa: {e}")
