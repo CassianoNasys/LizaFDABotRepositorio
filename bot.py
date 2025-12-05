@@ -25,7 +25,7 @@ RELATORIO_GROUP_ID = -5078417185
 
 # Arquivo para armazenar coordenadas
 COORDS_FILE = "coordenadas.json"
-MAPA_FILE = "mapa.png"
+MAPA_FILE = "mapa.html"
 
 # Variáveis globais para controlar o delay de geração de mapa
 mapa_timer = None
@@ -206,11 +206,9 @@ def add_coordinate(latitude: float, longitude: float, timestamp: str, cliente: s
 # ============================================================================
 
 def generate_map() -> bool:
-    """Gera um mapa real com tiles do OpenStreetMap com todas as coordenadas agrupadas por cliente."""
+    """Gera um mapa interativo com Folium com todas as coordenadas agrupadas por cliente."""
     try:
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import contextily as ctx
+        import folium
         
         coords_list = load_coordinates()
         
@@ -225,9 +223,18 @@ def generate_map() -> bool:
             logger.warning("Nenhuma coordenada com cliente para gerar mapa")
             return False
         
-        # Cria figura com proporção corrigida para Web Mercator
-        fig, ax = plt.subplots(figsize=(16, 12))
-        ax.set_aspect('equal', adjustable='box')
+        # Calcula o centro do mapa
+        lats = [c["latitude"] for c in coords_com_cliente]
+        lons = [c["longitude"] for c in coords_com_cliente]
+        center_lat = sum(lats) / len(lats)
+        center_lon = sum(lons) / len(lons)
+        
+        # Cria o mapa com OpenStreetMap
+        mapa = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=14,
+            tiles="OpenStreetMap"
+        )
         
         # Agrupa coordenadas por cliente
         coords_por_cliente = {}
@@ -237,79 +244,66 @@ def generate_map() -> bool:
                 coords_por_cliente[cliente] = []
             coords_por_cliente[cliente].append(coord)
         
-        # Calcula limites do mapa
-        lats = [c["latitude"] for c in coords_com_cliente]
-        lons = [c["longitude"] for c in coords_com_cliente]
-        
-        lat_min, lat_max = min(lats) - 0.015, max(lats) + 0.015
-        lon_min, lon_max = min(lons) - 0.015, max(lons) + 0.015
-        
-        # Converte de lat/lon para Web Mercator (EPSG:3857)
-        def latlon_to_mercator(lat, lon):
-            x = lon * 20037508.34 / 180.0
-            y = np.log(np.tan((90.0 + lat) * np.pi / 360.0)) * 20037508.34 / 180.0
-            return x, y
-        
-        x_min, y_min = latlon_to_mercator(lat_min, lon_min)
-        x_max, y_max = latlon_to_mercator(lat_max, lon_max)
-        
-        # Define limites do mapa
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
-        
-        # Adiciona tiles do OpenStreetMap
-        try:
-            ctx.add_basemap(ax, crs="EPSG:3857", source=ctx.providers.OpenStreetMap.Mapnik)
-            logger.info("Tiles do OpenStreetMap carregados com sucesso")
-        except Exception as e:
-            logger.warning(f"Erro ao carregar tiles: {e}")
-        
-        # Plota os pontos de cada cliente
+        # Adiciona marcadores para cada cliente
         for cliente_name, coords in coords_por_cliente.items():
             if cliente_name in CLIENTES_OURILANDIA:
                 cliente_info = CLIENTES_OURILANDIA[cliente_name]
                 cor = cliente_info["cor"]
                 
-                # Converte coordenadas para Web Mercator
-                lats_cliente = [c["latitude"] for c in coords]
-                lons_cliente = [c["longitude"] for c in coords]
+                # Adiciona círculo do raio de geofence
+                folium.Circle(
+                    location=[cliente_info["latitude"], cliente_info["longitude"]],
+                    radius=cliente_info["raio_metros"],
+                    color=cor,
+                    fill=True,
+                    fillColor=cor,
+                    fillOpacity=0.1,
+                    weight=2,
+                    popup=f"Geofence: {cliente_name}"
+                ).add_to(mapa)
                 
-                x_coords = [lon * 20037508.34 / 180.0 for lon in lons_cliente]
-                y_coords = [np.log(np.tan((90.0 + lat) * np.pi / 360.0)) * 20037508.34 / 180.0 for lat in lats_cliente]
+                # Adiciona marcador do centro
+                folium.Marker(
+                    location=[cliente_info["latitude"], cliente_info["longitude"]],
+                    popup=f"<b>Centro: {cliente_name}</b>",
+                    icon=folium.Icon(color=cor, icon="star", prefix="fa")
+                ).add_to(mapa)
                 
-                # Plota os pontos das fotos
-                ax.scatter(x_coords, y_coords, 
-                          c=cor, s=300, marker='o', 
-                          label=f"{cliente_name} ({len(coords)})",
-                          edgecolors='black', linewidth=2, zorder=3, alpha=0.8)
-                
-                # Plota o centro do cliente (geofence)
-                x_centro, y_centro = latlon_to_mercator(cliente_info["latitude"], cliente_info["longitude"])
-                ax.scatter(x_centro, y_centro,
-                          c=cor, s=600, marker='*',
-                          edgecolors='black', linewidth=2, zorder=2, alpha=0.6)
+                # Adiciona marcadores das fotos
+                for coord in coords:
+                    folium.Marker(
+                        location=[coord["latitude"], coord["longitude"]],
+                        popup=f"<b>{cliente_name}</b><br>ID: {coord['id']}<br>Data: {coord['timestamp']}<br>Lat: {coord['latitude']:.6f}<br>Lon: {coord['longitude']:.6f}",
+                        tooltip=f"{cliente_name} - {coord['timestamp']}",
+                        icon=folium.Icon(color=cor, icon="camera", prefix="fa")
+                    ).add_to(mapa)
         
-        # Configurações do gráfico
-        ax.set_xlabel("Longitude", fontsize=12, fontweight='bold')
-        ax.set_ylabel("Latitude", fontsize=12, fontweight='bold')
-        ax.set_title("Mapa de Pontos - Ourilândia", fontsize=16, fontweight='bold')
-        ax.legend(loc='upper left', fontsize=11, framealpha=0.95)
-        ax.grid(True, alpha=0.3)
+        # Adiciona legenda
+        legend_html = '''
+        <div style="position: fixed; 
+                    bottom: 50px; right: 50px; width: 280px; height: auto; 
+                    background-color: white; border:2px solid grey; z-index:9999; 
+                    font-size:13px; padding: 12px; border-radius: 5px;">
+            <b style="font-size: 14px;">Clientes - Ourilândia</b><br>
+            <hr style="margin: 5px 0;">
+        '''
         
-        # Remove os labels dos eixos (em Mercator)
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
+        for cliente_name, coords in sorted(coords_por_cliente.items()):
+            cor = CLIENTES_OURILANDIA[cliente_name]["cor"]
+            contagem = len(coords)
+            legend_html += f'<div style="margin: 5px 0;"><i style="background:{cor}; width: 16px; height: 16px; display: inline-block; border-radius: 50%; border: 1px solid black;"></i> <b>{cliente_name}</b>: {contagem} foto(s)</div>'
         
-        # Salva a figura com proporção mantida
-        plt.tight_layout()
-        plt.savefig(MAPA_FILE, dpi=150, bbox_inches='tight', pad_inches=0.5)
-        plt.close()
+        legend_html += '</div>'
         
-        logger.info(f"Mapa PNG com tiles gerado: {MAPA_FILE} com {len(coords_com_cliente)} pontos")
+        mapa.get_root().html.add_child(folium.Element(legend_html))
+        
+        # Salva como HTML
+        mapa.save(MAPA_FILE)
+        logger.info(f"Mapa HTML gerado: {MAPA_FILE} com {len(coords_com_cliente)} pontos")
         return True
     
-    except ImportError as e:
-        logger.error(f"Bibliotecas não instaladas: {e}")
+    except ImportError:
+        logger.error("Folium não está instalado")
         return False
     except Exception as e:
         logger.error(f"Erro ao gerar mapa: {e}")
@@ -337,9 +331,9 @@ async def schedule_map_generation(context: ContextTypes.DEFAULT_TYPE, delay: int
                 coords_com_cliente = [c for c in coords_list if c.get("cliente")]
                 
                 with open(MAPA_FILE, 'rb') as mapa_file:
-                    await context.bot.send_photo(
+                    await context.bot.send_document(
                         chat_id=RELATORIO_GROUP_ID,
-                        photo=mapa_file,
+                        document=mapa_file,
                         caption=f"🗺️ Mapa Ourilândia Atualizado!\n\n"
                                 f"📊 Total de pontos: {len(coords_com_cliente)}\n"
                                 f"⏰ Atualizado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
